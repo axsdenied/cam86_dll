@@ -1,10 +1,10 @@
-# cam86_fw
-Custom DLL for CAM86 DIY camera (Sony ICX453AQ)
+# cam86 low level library
+Custom DLL for CAM86 DIY camera (Sony ICX453AQ sensor)
 
 This project is based on work of Ukrainian telescope amateurs.
-Most of their work is shared on this huge [forum thread](http://www.astroclub.kiev.ua/forum/index.php?topic=28929.0)
+Most of their work is shared on this huge [forum thread](http://www.astroclub.kiev.ua/forum/index.php?topic=28929.0).
 
-The current work is described [here](http://www.iceinspace.com.au/forum/showthread.php?t=146493)
+The current work is described [here](http://www.iceinspace.com.au/forum/showthread.php?t=146493).
 
 The source code for the camera firmware can be found [here](https://github.com/axsdenied/cam86_fw) while the ASCOM driver can be found [here](https://github.com/axsdenied/cam86_ASCOM).
 

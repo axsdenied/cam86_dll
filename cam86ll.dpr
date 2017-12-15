@@ -33,7 +33,15 @@
 // 21-mar-2017 Luka Pravica 0.9.1L
 //     - Fix bugs in Pk reading
 // 27-Sep-2017 Luka Pravica 0.9.2L
-//     - Add caching of setCCDtemperature Get/Set and CoolerOn Get/Set during frame reads to prevent the white line bug 
+//     - Add caching of setCCDtemperature Get/Set and CoolerOn Get/Set during frame reads to prevent the white line bug
+// 10-Nov-2017 Oscar Casanova 0.9.3
+//     - Kp value sent is multiplied by 100 instead of 1000 to be compatible with new proportional control
+// 24-Nov-2017 Oscar Casanova 0.9.4
+//     - Add camera[Set|Get]PIDProportionalGain
+//           camera[Set|Get]PIDIntegralGain
+//           camera[Set|Get]PIDDerivativeGain
+//       to be compatible with full PID implementation
+//
 // --------------------------------------------------------------------------------
 
 {  Copyright � 2017 Gilmanov Rim, Vakulenko Sergiy and Luka Pravica
@@ -69,9 +77,10 @@ const
 
     debugOn = false;
     //debugFileName: string = 'cam86_log.txt';
-    debugFileName: string = 'C:\Users\user\Desktop\cam86_log.txt';
+    //debugFileName: string = 'C:\Users\user\Desktop\cam86_log.txt';
+    debugFileName: string = 'I:\oscar\Documents\src\cam86_log.txt';
 
-    softwareLLDriverVersion = 92;
+    softwareLLDriverVersion = 94;
 
     //ширина изображения
     CameraWidth  = 3000;
@@ -83,6 +92,41 @@ const
     yccd = 1000;
     //bitbang speed
     spusb = 20000;
+
+    // MCU commands
+    COMMAND_READFRAME               = $1b;
+    COMMAND_SHIFT3                  = $2b;
+    COMMAND_OFF15V                  = $3b;
+    COMMAND_SET_ROISTARTY           = $4b;
+    COMMAND_SET_ROINUMY             = $5b;
+    COMMAND_SET_EXPOSURE            = $6b;
+    COMMAND_SET_BINNING             = $8b;
+    COMMAND_ONOFFCOOLER             = $9b;
+    COMMAND_SET_TARGETTEMP          = $ab;
+    COMMAND_CLEARFRAME              = $cb;
+    COMMAND_INITMCU                 = $db;
+    COMMAND_SET_DELAYPERLINE        = $eb;
+    COMMAND_SET_COOLERONDURINGREAD  = $fb;
+    COMMAND_SET_COOLERPOWERSTART    = $0a;
+    COMMAND_SET_COOLERPOWERMAX      = $1a;
+    COMMAND_SET_PIDKP               = $2a;
+    COMMAND_SET_PIDKI               = $3a;
+    COMMAND_SET_PIDKD               = $4a;
+    COMMAND_GET_CASETEMP            = $f1;
+    COMMAND_GET_CASEHUM             = $f2;
+    COMMAND_GET_CCDTEMP             = $bf;
+    COMMAND_GET_TARGETTEMP          = $be;
+    COMMAND_GET_COOLERSTATUS        = $bd;
+    COMMAND_GET_COOLERPOWER         = $bc;
+    COMMAND_GET_VERSION             = $bb;
+    COMMAND_GET_COOLERPOWERSTART    = $ba;
+    COMMAND_GET_COOLERPOWERMAX      = $b9;
+    COMMAND_GET_PIDKP_LW            = $b8;
+    COMMAND_GET_PIDKP_HW            = $b7;
+    COMMAND_GET_PIDKI_LW            = $b6;
+    COMMAND_GET_PIDKI_HW            = $b5;
+    COMMAND_GET_PIDKD_LW            = $b4;
+    COMMAND_GET_PIDKD_HW            = $b3;
 
     //camera state consts
     cameraIdle = 0;
@@ -156,6 +200,8 @@ var
     CoolingStartingPowerPercentageCache : integer = -1;
     CoolingMaximumPowerPercentageCache : integer = 101;
     KpCache : Double = 0.0;
+    KiCache : Double = 0.0;
+    KdCache : Double = 0.0;
 
 
     // timer counter
@@ -489,7 +535,7 @@ begin
     Purge_USB_Device_IN(FT_HANDLEA);
     // Purge_USB_Device_OUT(FT_HANDLEB);
     comread;
-    Spi_comm($1b,0);
+    Spi_comm(COMMAND_READFRAME,0);
 end;
 
 // -------------------------------------------------------------------------------
@@ -590,7 +636,7 @@ begin
 
         sleep(100);
         //send init command
-        Spi_comm($db,0);
+        Spi_comm(COMMAND_INITMCU,0);
         sleep(100);
         
         //убрать 2 байта, возникших после reset
@@ -680,19 +726,19 @@ begin
     errorReadFlag := false;
     imageReady := false;
     mYn:=0;
-    Spi_comm($4b,mYn);
+    Spi_comm(COMMAND_SET_ROISTARTY,mYn);
     mdeltY:=CameraHeight div 2;
-    Spi_comm($5b,mdeltY);
+    Spi_comm(COMMAND_SET_ROINUMY,mdeltY);
 
     // use 2x2 binning to increase the reading speed
     // the image will be deleted anyway
     kolbyte:=mdeltY*3008;
     //bining
-    Spi_comm($8b,1);
+    Spi_comm(COMMAND_SET_BINNING,1);
     mBin:=1;
 
     expoz := 0; // zero exposure
-    Spi_comm($6b,expoz);
+    Spi_comm(COMMAND_SET_EXPOSURE,expoz);
 
     cameraState := cameraExposing;
 
@@ -724,21 +770,21 @@ begin
     imageReady := false;
     
     mYn:=StartY div 2;
-    Spi_comm($4b,mYn);
+    Spi_comm(COMMAND_SET_ROISTARTY,mYn);
     mdeltY:=NumY div 2;
-    Spi_comm($5b,mdeltY);
+    Spi_comm(COMMAND_SET_ROINUMY,mdeltY);
 
     if bin = 2 then
     begin
         kolbyte:=mdeltY*3008;
         //bining
-        Spi_comm($8b,1);
+        Spi_comm(COMMAND_SET_BINNING,1);
         mBin:=1;
     end
     else begin
         kolbyte:=mdeltY*12008;
         //no bining
-        Spi_comm($8b,0);
+        Spi_comm(COMMAND_SET_BINNING,0);
         mBin:=0;
     end;
 
@@ -747,20 +793,20 @@ begin
     begin
         expoz:=1001;
     end;
-    Spi_comm($6b,expoz);
+    Spi_comm(COMMAND_SET_EXPOSURE,expoz);
 
     cameraState := cameraExposing;
     if Duration > 1.0 then
     begin
         //shift3
-        Spi_comm($2b,0);
+        Spi_comm(COMMAND_SHIFT3,0);
         sleep(40);
         //clear frame
-        Spi_comm($cb,0);
+        Spi_comm(COMMAND_CLEARFRAME,0);
         // for time of clear frame
         sleep(180);
         //off 15v
-        Spi_comm($3b,0);
+        Spi_comm(COMMAND_OFF15V,0);
         eexp:=round(1000*(Duration-1.2));
         if eexp < 0 then
         begin
@@ -869,7 +915,7 @@ begin
     end
     else
     begin
-        Spi_comm($bf,0);
+        Spi_comm(COMMAND_GET_CCDTEMP,0);
         temp := (siout - TemperatureOffset) / 10.0;
         if ((temp > MaxErrTemp) or (temp < MinErrTemp)) then
         begin
@@ -894,7 +940,7 @@ begin
     else
     begin
         d0 := TemperatureOffset + round(temp*10);
-        Spi_comm($ab,d0);
+        Spi_comm(COMMAND_SET_TARGETTEMP,d0);
         targetTempDirty := false;
         debugToFile('cameraSetTemp: setting temperature ' + FloatToStr(targetTempCache));
     end;
@@ -913,7 +959,7 @@ begin
     end
     else
     begin
-      Spi_comm($be,0);
+      Spi_comm(COMMAND_GET_TARGETTEMP,0);
       temp := (siout - TemperatureOffset) / 10.0;
       if ((temp > MaxErrTemp) or (temp < MinErrTemp)) then
       begin
@@ -936,7 +982,7 @@ begin
     end
     else
     begin
-        Spi_comm($9b,1);
+        Spi_comm(COMMAND_ONOFFCOOLER,1);
     end;
 
     Result := true;
@@ -953,7 +999,7 @@ begin
     end
     else
     begin
-      Spi_comm($9b,0);
+      Spi_comm(COMMAND_ONOFFCOOLER,0);
     end;
     
     Result := true;
@@ -969,7 +1015,7 @@ begin
     end
     else
     begin
-        Spi_comm($bd,0);
+        Spi_comm(COMMAND_GET_COOLERSTATUS,0);
         if (siout = TRUE_INV_PROT) then
         begin
             coolerOnCache := true;
@@ -997,7 +1043,7 @@ begin
     end
     else
     begin
-        Spi_comm($bc,0);
+        Spi_comm(COMMAND_GET_COOLERPOWER,0);
         if (( siout shr 8) = (HIGH_MASK_PROT shr 8)) then
         begin
             power := (siout and $00ff) / 2.55;
@@ -1014,7 +1060,7 @@ function cameraSetReadingTime(val: integer)  : WordBool; stdcall; export;
 begin
     debugToFile('cameraSetReadingTime');
 
-    Spi_comm($eb, val);
+    Spi_comm(COMMAND_SET_DELAYPERLINE, val);
     Result := true;
 end;
 
@@ -1028,7 +1074,7 @@ begin
     end
     else
     begin
-        Spi_comm($bb,0);
+        Spi_comm(COMMAND_GET_VERSION,0);
         firmwareVersionCache := siout And $ff;
         Result := firmwareVersionCache;
     end;
@@ -1038,7 +1084,7 @@ function cameraSetCoolerDuringReading(val: integer) : Wordbool; stdcall; export;
 begin
     debugToFile('cameraSetCoolerDuringReading');
 
-    Spi_comm($fb, val);
+    Spi_comm(COMMAND_SET_COOLERONDURINGREAD, val);
     Result := true;
 end;
 
@@ -1067,7 +1113,7 @@ begin
     end
     else
     begin
-      Spi_comm($f1,0);
+      Spi_comm(COMMAND_GET_CASETEMP,0);
       tempDHTCache := (siout - TemperatureOffset) / 10.0;
       Result := tempDHTCache;
     end
@@ -1083,7 +1129,7 @@ begin
     end
     else
     begin
-      Spi_comm($f2,0);
+      Spi_comm(COMMAND_GET_CASEHUM,0);
       humidityDHTCache := (siout) / 10.0;
       Result := humidityDHTCache;
     end
@@ -1093,7 +1139,7 @@ function cameraSetCoolingStartingPowerPercentage(val: integer)  : WordBool; stdc
 begin
     debugToFile('cameraSetCoolingStartingPowerPercentage');
 
-    Spi_comm($0a, val);
+    Spi_comm(COMMAND_SET_COOLERPOWERSTART, val);
     Result := true;
     CoolingStartingPowerPercentageCache := val;
 end;
@@ -1102,7 +1148,7 @@ function cameraSetCoolingMaximumPowerPercentage(val: integer)  : WordBool; stdca
 begin
     debugToFile('cameraSetCoolingMaximumPowerPercentage');
 
-    Spi_comm($1a, val);
+    Spi_comm(COMMAND_SET_COOLERPOWERMAX, val);
     CoolingMaximumPowerPercentageCache := val;
     Result := true;
 end;
@@ -1117,7 +1163,7 @@ begin
     end
     else
     begin
-        Spi_comm($ba,0);
+        Spi_comm(COMMAND_GET_COOLERPOWERSTART,0);
         CoolingStartingPowerPercentageCache := siout;
         Result := CoolingStartingPowerPercentageCache;
     end;
@@ -1133,7 +1179,7 @@ begin
     end
     else
     begin
-        Spi_comm($b9,0);
+        Spi_comm(COMMAND_GET_COOLERPOWERMAX,0);
         CoolingMaximumPowerPercentageCache := siout;
         Result := CoolingMaximumPowerPercentageCache;
     end;
@@ -1143,7 +1189,7 @@ function cameraSetPIDproportionalGain(val: double)  : WordBool; stdcall; export;
 begin
     debugToFile('cameraSetPIDproportionalGain');
 
-    Spi_comm($2a, trunc(val * 1000.0));
+    Spi_comm(COMMAND_SET_PIDKP, trunc(val * 100.0));
     KpCache := val;
 
     debugToFile('cameraSetPIDproportionalGain: value=' + FloatToStr(val));
@@ -1151,43 +1197,49 @@ begin
     Result := true;
 end;
 
-function cameraGetPIDproportionalGainOld : double; stdcall; export;
-var temp : integer;
+function cameraSetPIDintegralGain(val: double)  : WordBool; stdcall; export;
 begin
-    debugToFile('cameraGetPIDproportionalGainOld');
+    debugToFile('cameraSetPIDintegralGain');
 
-    if ((cameraState = cameraReading) or (cameraState = cameraDownload)) then
-    begin
-        debugToFile('cameraGetPIDproportionalGain: Using cached value');
-        Result := KpCache / 1000.0;
-    end
-    else
-    begin
-        Spi_comm($b8,0);
-        temp := siout;
-        KpCache := temp;
-        debugToFile('cameraGetPIDproportionalGain: value=' + IntToStr(temp) + ', Result=' + FloatToStr(temp / 1000.0));
-        Result := temp / 1000.0;
-    end;
+    Spi_comm(COMMAND_SET_PIDKI, trunc(val * 100.0));
+    KiCache := val;
+
+    debugToFile('cameraSetPIDintegralGain: value=' + FloatToStr(val));
+
+    Result := true;
 end;
 
-function cameraGetPIDproportionalGainLow : word; stdcall; export;
+function cameraSetPIDderivativeGain(val: double)  : WordBool; stdcall; export;
 begin
-    debugToFile('cameraGetPIDproportionalGainLow');
+    debugToFile('cameraSetPIDderivativeGain');
 
-    Spi_comm($b8,0);
+    Spi_comm(COMMAND_SET_PIDKD, trunc(val * 100.0));
+    KdCache := val;
+
+    debugToFile('cameraSetPIDderivativeGain: value=' + FloatToStr(val));
+
+    Result := true;
+end;
+
+
+function cameraGetPIDGainLow(cmd: byte) : word; stdcall; export;
+begin
+    debugToFile('cameraGetPIDGainLow');
+
+    Spi_comm(cmd,0);
     Result := siout;
 end;
 
-function cameraGetPIDproportionalGainHigh : word; stdcall; export;
+function cameraGetPIDGainHigh(cmd: byte) : word; stdcall; export;
 begin
-    debugToFile('cameraGetPIDproportionalGainHigh');
+    debugToFile('cameraGetPIDGainHigh');
 
-    Spi_comm($b7,0);
+    Spi_comm(cmd,0);
     Result := siout;
 end;
 
-function cameraGetPIDproportionalGain : double; stdcall; export;
+
+function cameraGetPIDGain (var cacheVar: Double; cmdLow:byte; cmdHigh:byte) : double; stdcall; export;
 var
     temp : array[0..3] of byte;
     temp_low : word;
@@ -1198,8 +1250,8 @@ begin
 
     if ((cameraState = cameraReading) or (cameraState = cameraDownload)) then
     begin
-        debugToFile('cameraGetPIDproportionalGain: Using cached value');
-        Result := KpCache;
+        debugToFile('cameraGetPIDGain: Using cached value');
+        Result := cacheVar;
     end
     else
     begin
@@ -1207,12 +1259,12 @@ begin
         // under some conditions.
         // for example
         // float x = 0.4*1000.0 equals 400.0 while
-        // float a = 0.4; 
+        // float a = 0.4;
         // float x = a * 1000.0 equals 100.0
         // ??????
         // we read 4-byte long byte array and convert it to a floating point
-        temp_low := cameraGetPIDproportionalGainLow();
-        temp_high := cameraGetPIDproportionalGainHigh();
+        temp_low := cameraGetPIDGainLow(cmdLow);
+        temp_high := cameraGetPIDGainHigh(cmdHigh);
         temp[0] := temp_low And $FF;
         temp[1] := temp_low Shr 8;
         temp[2] := temp_high And $FF;
@@ -1225,10 +1277,27 @@ begin
                     ', raw value=' + IntToStr(temp[0]) + ', ' + IntToStr(temp[1]) + ', ' +
                     IntToStr(temp[2]) + ', ' + IntToStr(temp[3]) + '; Result=' + FloatToStr(temp_single));
 
-        KpCache := temp_single;
-        Result := KpCache;
+        cacheVar := temp_single;
+        Result := cacheVar;
     end;
 end;
+
+function cameraGetPIDproportionalGain : double; stdcall; export;
+begin
+    Result := cameraGetPIDGain (KpCache, COMMAND_GET_PIDKP_LW, COMMAND_GET_PIDKP_HW)
+end;
+
+function cameraGetPIDintegralGain : double; stdcall; export;
+begin
+  Result := cameraGetPIDGain (KiCache, COMMAND_GET_PIDKI_LW, COMMAND_GET_PIDKI_HW)
+end;
+
+function cameraGetPIDderivativeGain : double; stdcall; export;
+begin
+  Result := cameraGetPIDGain (KdCache, COMMAND_GET_PIDKD_LW, COMMAND_GET_PIDKD_HW)
+end;
+
+
 
 exports cameraGetLLDriverVersion;
 exports cameraConnect;
@@ -1259,6 +1328,10 @@ exports cameraSetCoolingStartingPowerPercentage;
 exports cameraSetCoolingMaximumPowerPercentage;
 exports cameraSetPIDproportionalGain;
 exports cameraGetPIDproportionalGain;
+exports cameraSetPIDintegralGain;
+exports cameraGetPIDintegralGain;
+exports cameraSetPIDderivativeGain;
+exports cameraGetPIDderivativeGain;
 exports cameraGetCoolingStartingPowerPercentage;
 exports cameraGetCoolingMaximumPowerPercentage;
 

@@ -41,6 +41,9 @@
 //           camera[Set|Get]PIDIntegralGain
 //           camera[Set|Get]PIDDerivativeGain
 //       to be compatible with full PID implementation
+// 03-Feb-2018 Luka Pravica 0.9.5
+//     - Improve debugging outputs
+//     - Add delays after some commands to fix issue where commands are being sent too quickly to ATMega and getting lost
 //
 // --------------------------------------------------------------------------------
 
@@ -78,9 +81,10 @@ const
     debugOn = false;
     //debugFileName: string = 'cam86_log.txt';
     //debugFileName: string = 'C:\Users\user\Desktop\cam86_log.txt';
-    debugFileName: string = 'I:\oscar\Documents\src\cam86_log.txt';
+    //debugFileName: string = 'I:\oscar\Documents\src\cam86_log.txt';
+    debugFileName: string = 'D:\APT_Images\cam86_log.txt';
 
-    softwareLLDriverVersion = 94;
+    softwareLLDriverVersion = 95;
 
     //ширина изображения
     CameraWidth  = 3000;
@@ -92,6 +96,12 @@ const
     yccd = 1000;
     //bitbang speed
     spusb = 20000;
+
+    // a delay is needed after some commands.
+    // As the firmware does not reply after a command is executed, ATMega may have no time
+    // to process it before another command is sent. Hence commands may get lost
+    // The real answer is to upgrade the firmware, this is just a quick fix
+    afterCommandSleepTime = 100;
 
     // MCU commands
     COMMAND_READFRAME               = $1b;
@@ -248,7 +258,7 @@ begin
             end;
             debugTextFileIsOpen := True;
         end;
-        WriteLn(debugTextFile, DateToStr(Now) + TimeToStr(Now) + ': ' + line);
+        WriteLn(debugTextFile, DateToStr(Now) + ' ' + TimeToStr(Now) + ': ' + line);
         Flush(debugTextFile);
         CloseFile(debugTextFile);
         debugTextFileIsOpen := False;
@@ -529,7 +539,7 @@ end;
 // Заполнение выходного буфера массивом и собственно сама операция чтения кадра в 1 режиме
 procedure readframe;
 begin
-    debugToFile('readframe');
+    debugToFile('readframe called');
 
     cameraState := cameraReading;
     Purge_USB_Device_IN(FT_HANDLEA);
@@ -547,6 +557,8 @@ function cameraSetGain (val : integer) : WordBool; stdcall; export;
 begin
     //усиление AD9822
     AD9822(3,val);
+
+    sleep(afterCommandSleepTime);
     Result :=true;
 end;
 
@@ -554,7 +566,7 @@ end;
 function cameraSetOffset (val : integer) : WordBool; stdcall; export;
 var x : integer;
 begin
-    debugToFile('cameraSetOffset');
+    debugToFile('cameraSetOffset: Offset set to' + IntToStr(val));
 
     x:=abs(2*val);
     if val < 0 then
@@ -563,6 +575,8 @@ begin
     end;
     //смещение AD9822
     AD9822(6,x);
+
+    sleep(afterCommandSleepTime);
     Result :=true;
 end;
 
@@ -582,7 +596,7 @@ begin
     coolerPowerCache := 0;
     firmwareVersionCache := 0;
 
-    debugToFile('cameraConnect');
+    debugToFile('cameraConnect called');
 
     if (FT_flag) then
     begin
@@ -631,6 +645,7 @@ begin
         AD9822(1,$a0);
     
         CameraSetGain(0);
+        sleep(afterCommandSleepTime);
         //усиление устанавливается такое. что не переполняется АЦП
         CameraSetOffset(-6);
 
@@ -658,7 +673,7 @@ end;
 function cameraDisconnect (): WordBool; stdcall; export;
 var FT_OP_flag : boolean;
 begin
-    debugToFile('cameraDisconnect');
+    debugToFile('cameraDisconnect called');
 
     FT_OP_flag := true;
     //закрытие устройств
@@ -677,7 +692,7 @@ end;
 // Check camera connection, return bool result}
 function cameraIsConnected () : WordBool; stdcall; export;
 begin
-    debugToFile('cameraIsConnected');
+    debugToFile('cameraIsConnected: result=' + BoolToStr(isConnected));
     Result := isConnected;
 end;
 
@@ -721,7 +736,7 @@ end;
 procedure cameraSensorClearFull();
 var expoz:integer;
 begin
-    debugToFile('cameraSensorClearFull');
+    debugToFile('cameraSensorClearFull called');
 
     errorReadFlag := false;
     imageReady := false;
@@ -759,7 +774,10 @@ end;
 function cameraStartExposure (Bin, StartX, StartY, NumX, NumY : integer; Duration : double; light : WordBool) : WordBool; stdcall; export;
 var expoz:integer;
 begin
-    debugToFile('cameraStartExposure');
+    debugToFile('cameraStartExposure: Bin=' + IntToStr(Bin) + ', StartX=' + IntToStr(StartX) +
+                ', StartY=' + IntToStr(StartY) + ', NumX=' + IntToStr(NumX) +
+                ', NumY=' + IntToStr(NumY) + ', Duration=' + FloatToStr(Duration) +
+                ', light=' + BoolToStr(light));
     
     if (sensorClear) then
     begin
@@ -850,7 +868,7 @@ end;
 
 function cameraStopExposure : WordBool; stdcall; export;
 begin
-    debugToFile('cameraStopExposure');
+    debugToFile('cameraStopExposure called');
 
     TimeKillEvent(ExposureTimer);
     if (cameraState = cameraExposing) then
@@ -863,8 +881,8 @@ end;
 //Get camera state, return int result
 function cameraGetCameraState : integer; stdcall; export;
 begin
-    debugToFile('cameraGetCameraState');
-
+    debugToFile('cameraGetCameraState called');
+    
     if (not errorWriteFlag) then
     begin
       Result := cameraState
@@ -872,20 +890,22 @@ begin
     else begin
         Result := cameraError;
     end;
+
+    debugToFile('cameraGetCameraState: state=' + IntToStr(Result));
 end;
 
 //Check ImageReady flag, is image ready for transfer - transfer image to driver and return bool ImageReady flag
 function cameraGetImageReady : WordBool; stdcall; export;
 begin
-    debugToFile('cameraGetImageReady');
-
     Result := imageReady;
+
+    debugToFile('cameraGetImageReady: state=' + BoolToStr(Result));
 end;
 
 //Get back pointer to image
 function cameraGetImage : dword; stdcall; export;
 begin
-    debugToFile('cameraGetImage');
+    debugToFile('cameraGetImage called');
 
     cameraState:=cameraDownload;
     cameraState:=cameraIdle;
@@ -896,19 +916,21 @@ end;
 function cameraGetError : integer; stdcall; export;
 var res : integer;
 begin
-    debugToFile('cameraGetError');
+    debugToFile('cameraGetError called');
 
     res:=0;
     if (errorWriteFlag) then res :=res+2;
     if (errorReadFlag) then res :=res+1;
     Result:=res;
+
+    debugToFile('cameraGetError: error=' + IntToStr(Result));
 end;
 
 function cameraGetTemp (): double; stdcall; export;
 var temp : double;
 begin
-    debugToFile('cameraGetTemp');
-
+    debugToFile('cameraGetTemp called');
+    
     if ((cameraState = cameraReading) or (cameraState = cameraDownload)) then
     begin
         Result := sensorTempCache;
@@ -924,12 +946,14 @@ begin
         sensorTempCache := temp;
         Result := temp;
     end;
+
+    debugToFile('cameraGetTemp: temp=' + FloatToStr(Result));
 end;
 
 function cameraSetTemp(temp : double): WordBool; stdcall; export;
 var d0:word;
 begin
-    debugToFile('cameraSetTemp');
+    debugToFile('cameraSetTemp: temp=' + FloatToStr(temp));
 
     if ((cameraState = cameraReading) or (cameraState = cameraDownload)) then
     begin
@@ -942,16 +966,17 @@ begin
         d0 := TemperatureOffset + round(temp*10);
         Spi_comm(COMMAND_SET_TARGETTEMP,d0);
         targetTempDirty := false;
-        debugToFile('cameraSetTemp: setting temperature ' + FloatToStr(targetTempCache));
+        debugToFile('cameraSetTemp: setting temperature ' + FloatToStr(temp));
     end;
-    
+
+    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
 function cameraGetSetTemp (): double; stdcall; export;
 var temp : double;
 begin
-    debugToFile('cameraGetSetTemp');
+    debugToFile('cameraGetSetTemp called');
 
     if ((cameraState = cameraReading) or (cameraState = cameraDownload)) then
     begin
@@ -968,11 +993,13 @@ begin
       targetTempCache := temp;
       Result := temp;
     end;
+
+    debugToFile('cameraGetSetTemp: temp=' + FloatToStr(Result));
 end;
 
 function cameraCoolingOn (): WordBool; stdcall; export;
 begin
-    debugToFile('cameraCoolingOn');
+    debugToFile('cameraCoolingOn called');
 
     if ((cameraState = cameraReading) or (cameraState = cameraDownload)) then
     begin
@@ -985,12 +1012,13 @@ begin
         Spi_comm(COMMAND_ONOFFCOOLER,1);
     end;
 
+    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
 function cameraCoolingOff (): WordBool; stdcall; export;
 begin
-    debugToFile('cameraCoolingOff');
+    debugToFile('cameraCoolingOff called');
     if ((cameraState = cameraReading) or (cameraState = cameraDownload)) then
     begin
         debugToFile('cameraCoolingOn: Caching cooler off value');
@@ -1001,13 +1029,14 @@ begin
     begin
       Spi_comm(COMMAND_ONOFFCOOLER,0);
     end;
-    
+
+    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
 function cameraGetCoolerOn (): WordBool; stdcall; export;
 begin
-    debugToFile('cameraGetCoolerOn');
+    debugToFile('cameraGetCoolerOn called');
 
     if ((cameraState = cameraReading) or (cameraState = cameraDownload)) then
     begin
@@ -1030,12 +1059,14 @@ begin
             Result := coolerOnCache;
         end;
     end;
+
+    debugToFile('cameraGetCoolerOn: coolerOn=' + BoolToStr(Result));
 end;
 
 function cameraGetCoolerPower (): double; stdcall; export;
 var power : double;
 begin
-    debugToFile('cameraGetCoolerPower');
+    debugToFile('cameraGetCoolerPower called');
 
     if ((cameraState = cameraReading) or (cameraState = cameraDownload)) then
     begin
@@ -1054,19 +1085,23 @@ begin
         coolerPowerCache := power;
         Result := power;
     end;
+
+    debugToFile('cameraGetCoolerPower: power=' + FloatToStr(Result));
 end;
 
 function cameraSetReadingTime(val: integer)  : WordBool; stdcall; export;
 begin
-    debugToFile('cameraSetReadingTime');
+    debugToFile('cameraSetReadingTime: time=' + IntToStr(val));
 
     Spi_comm(COMMAND_SET_DELAYPERLINE, val);
+
+    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
 function cameraGetFirmwareVersion : byte; stdcall; export;
 begin
-    debugToFile('cameraGetFirmwareVersion');
+    debugToFile('cameraGetFirmwareVersion called');
 
     if ((cameraState = cameraReading) or (cameraState = cameraDownload)) then
     begin
@@ -1078,26 +1113,29 @@ begin
         firmwareVersionCache := siout And $ff;
         Result := firmwareVersionCache;
     end;
+
+    debugToFile('cameraGetFirmwareVersion: version=' + IntToStr(Result));
 end;
 
 function cameraSetCoolerDuringReading(val: integer) : Wordbool; stdcall; export;
 begin
-    debugToFile('cameraSetCoolerDuringReading');
+    debugToFile('cameraSetCoolerDuringReading: value=' + IntToStr(val));
 
     Spi_comm(COMMAND_SET_COOLERONDURINGREAD, val);
+
+    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
 function cameraGetLLDriverVersion : byte; stdcall; export
 begin
-    debugToFile('cameraGetLLDriverVersion');
-
     Result := softwareLLDriverVersion;
+    debugToFile('cameraGetLLDriverVersion: ver=' + IntToStr(Result));
 end;
 
 function cameraSetBiasBeforeExposure(val: Wordbool) : WordBool; stdcall; export;
 begin
-    debugToFile('cameraSetBiasBeforeExposure');
+    debugToFile('cameraSetBiasBeforeExposure: val=' + BoolToStr(val));
 
     sensorClear := val;
     Result := true;
@@ -1105,7 +1143,7 @@ end;
 
 function cameraGetTempDHT (): double; stdcall; export
 begin
-    debugToFile('cameraGetTempDHT');
+    debugToFile('cameraGetTempDHT called');
 
     if ((cameraState = cameraReading) or (cameraState = cameraDownload)) then
     begin
@@ -1116,12 +1154,14 @@ begin
       Spi_comm(COMMAND_GET_CASETEMP,0);
       tempDHTCache := (siout - TemperatureOffset) / 10.0;
       Result := tempDHTCache;
-    end
+    end;
+
+    debugToFile('cameraGetTempDHT: temp=' + FloatToStr(Result));
 end;
 
 function cameraGetHumidityDHT (): double; stdcall; export
 begin
-    debugToFile('cameraGetHumidityDHT');
+    debugToFile('cameraGetHumidityDHT called');
 
     if ((cameraState = cameraReading) or (cameraState = cameraDownload)) then
     begin
@@ -1132,30 +1172,36 @@ begin
       Spi_comm(COMMAND_GET_CASEHUM,0);
       humidityDHTCache := (siout) / 10.0;
       Result := humidityDHTCache;
-    end
+    end;
+
+    debugToFile('cameraGetHumidityDHT: hum=' + FloatToStr(Result));
 end;
 
 function cameraSetCoolingStartingPowerPercentage(val: integer)  : WordBool; stdcall; export;
 begin
-    debugToFile('cameraSetCoolingStartingPowerPercentage');
+    debugToFile('cameraSetCoolingStartingPowerPercentage: val=' + IntToStr(val));
 
     Spi_comm(COMMAND_SET_COOLERPOWERSTART, val);
-    Result := true;
+
     CoolingStartingPowerPercentageCache := val;
+    sleep(afterCommandSleepTime);
+    Result := true;
 end;
 
 function cameraSetCoolingMaximumPowerPercentage(val: integer)  : WordBool; stdcall; export;
 begin
-    debugToFile('cameraSetCoolingMaximumPowerPercentage');
+    debugToFile('cameraSetCoolingMaximumPowerPercentage: val=' + IntToStr(val));
 
     Spi_comm(COMMAND_SET_COOLERPOWERMAX, val);
+    
     CoolingMaximumPowerPercentageCache := val;
+    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
 function cameraGetCoolingStartingPowerPercentage : integer; stdcall; export;
 begin
-    debugToFile('cameraGetCoolingStartingPowerPercentage');
+    debugToFile('cameraGetCoolingStartingPowerPercentage called');
 
     if ((cameraState = cameraReading) or (cameraState = cameraDownload)) then
     begin
@@ -1167,11 +1213,13 @@ begin
         CoolingStartingPowerPercentageCache := siout;
         Result := CoolingStartingPowerPercentageCache;
     end;
+
+    debugToFile('cameraGetCoolingStartingPowerPercentage: power=' + IntToStr(Result));
 end;
 
 function cameraGetCoolingMaximumPowerPercentage : integer; stdcall; export;
 begin
-    debugToFile('cameraGetCoolingMaximumPowerPercentage');
+    debugToFile('cameraGetCoolingMaximumPowerPercentage called');
 
     if ((cameraState = cameraReading) or (cameraState = cameraDownload)) then
     begin
@@ -1183,48 +1231,53 @@ begin
         CoolingMaximumPowerPercentageCache := siout;
         Result := CoolingMaximumPowerPercentageCache;
     end;
+
+    debugToFile('cameraGetCoolingMaximumPowerPercentage: MaxPower=' + IntToStr(Result));
 end;
 
 function cameraSetPIDproportionalGain(val: double)  : WordBool; stdcall; export;
 begin
-    debugToFile('cameraSetPIDproportionalGain');
+    debugToFile('cameraSetPIDproportionalGain called');
 
     Spi_comm(COMMAND_SET_PIDKP, trunc(val * 100.0));
     KpCache := val;
 
     debugToFile('cameraSetPIDproportionalGain: value=' + FloatToStr(val));
 
+    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
 function cameraSetPIDintegralGain(val: double)  : WordBool; stdcall; export;
 begin
-    debugToFile('cameraSetPIDintegralGain');
+    debugToFile('cameraSetPIDintegralGain called');
 
     Spi_comm(COMMAND_SET_PIDKI, trunc(val * 100.0));
     KiCache := val;
 
     debugToFile('cameraSetPIDintegralGain: value=' + FloatToStr(val));
 
+    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
 function cameraSetPIDderivativeGain(val: double)  : WordBool; stdcall; export;
 begin
-    debugToFile('cameraSetPIDderivativeGain');
+    debugToFile('cameraSetPIDderivativeGain called');
 
     Spi_comm(COMMAND_SET_PIDKD, trunc(val * 100.0));
     KdCache := val;
 
     debugToFile('cameraSetPIDderivativeGain: value=' + FloatToStr(val));
 
+    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
 
 function cameraGetPIDGainLow(cmd: byte) : word; stdcall; export;
 begin
-    debugToFile('cameraGetPIDGainLow');
+    debugToFile('cameraGetPIDGainLow called');
 
     Spi_comm(cmd,0);
     Result := siout;
@@ -1232,7 +1285,7 @@ end;
 
 function cameraGetPIDGainHigh(cmd: byte) : word; stdcall; export;
 begin
-    debugToFile('cameraGetPIDGainHigh');
+    debugToFile('cameraGetPIDGainHigh called');
 
     Spi_comm(cmd,0);
     Result := siout;
@@ -1246,7 +1299,7 @@ var
     temp_high : word;
     temp_single : single;
 begin
-    debugToFile('cameraGetPIDproportionalGain');
+    debugToFile('cameraGetPIDproportionalGain called');
 
     if ((cameraState = cameraReading) or (cameraState = cameraDownload)) then
     begin
@@ -1284,17 +1337,21 @@ end;
 
 function cameraGetPIDproportionalGain : double; stdcall; export;
 begin
-    Result := cameraGetPIDGain (KpCache, COMMAND_GET_PIDKP_LW, COMMAND_GET_PIDKP_HW)
+    Result := cameraGetPIDGain (KpCache, COMMAND_GET_PIDKP_LW, COMMAND_GET_PIDKP_HW);
+
+    debugToFile('cameraGetPIDproportionalGain: gain=' + FloatToStr(Result));
 end;
 
 function cameraGetPIDintegralGain : double; stdcall; export;
 begin
-  Result := cameraGetPIDGain (KiCache, COMMAND_GET_PIDKI_LW, COMMAND_GET_PIDKI_HW)
+    Result := cameraGetPIDGain (KiCache, COMMAND_GET_PIDKI_LW, COMMAND_GET_PIDKI_HW);
+    debugToFile('cameraGetPIDintegralGain: gain=' + FloatToStr(Result));
 end;
 
 function cameraGetPIDderivativeGain : double; stdcall; export;
 begin
-  Result := cameraGetPIDGain (KdCache, COMMAND_GET_PIDKD_LW, COMMAND_GET_PIDKD_HW)
+    Result := cameraGetPIDGain (KdCache, COMMAND_GET_PIDKD_LW, COMMAND_GET_PIDKD_HW);
+    debugToFile('cameraGetPIDderivativeGain: gain=' + FloatToStr(Result));
 end;
 
 

@@ -43,7 +43,9 @@
 //       to be compatible with full PID implementation
 // 03-Feb-2018 Luka Pravica 0.9.5
 //     - Improve debugging outputs
-//     - Add delays after some commands to fix issue where commands are being sent too quickly to ATMega and getting lost
+//     - Add delays after some commands to fix problems where commands are being sent too quickly to ATMega and getting lost
+// 17-Feb-2018 Luka Pravica 0.9.6
+//     - Remove delays, move them to the main driver
 //
 // --------------------------------------------------------------------------------
 
@@ -82,9 +84,9 @@ const
     //debugFileName: string = 'cam86_log.txt';
     //debugFileName: string = 'C:\Users\user\Desktop\cam86_log.txt';
     //debugFileName: string = 'I:\oscar\Documents\src\cam86_log.txt';
-    debugFileName: string = 'D:\APT_Images\cam86_log.txt';
+    debugFileName: string = 'D:\cam86_log.txt';
 
-    softwareLLDriverVersion = 95;
+    softwareLLDriverVersion = 96;
 
     //ширина изображения
     CameraWidth  = 3000;
@@ -96,12 +98,6 @@ const
     yccd = 1000;
     //bitbang speed
     spusb = 20000;
-
-    // a delay is needed after some commands.
-    // As the firmware does not reply after a command is executed, ATMega may have no time
-    // to process it before another command is sent. Hence commands may get lost
-    // The real answer is to upgrade the firmware, this is just a quick fix
-    afterCommandSleepTime = 100;
 
     // MCU commands
     COMMAND_READFRAME               = $1b;
@@ -558,7 +554,6 @@ begin
     //усиление AD9822
     AD9822(3,val);
 
-    sleep(afterCommandSleepTime);
     Result :=true;
 end;
 
@@ -576,7 +571,6 @@ begin
     //смещение AD9822
     AD9822(6,x);
 
-    sleep(afterCommandSleepTime);
     Result :=true;
 end;
 
@@ -645,7 +639,7 @@ begin
         AD9822(1,$a0);
     
         CameraSetGain(0);
-        sleep(afterCommandSleepTime);
+
         //усиление устанавливается такое. что не переполняется АЦП
         CameraSetOffset(-6);
 
@@ -969,7 +963,6 @@ begin
         debugToFile('cameraSetTemp: setting temperature ' + FloatToStr(temp));
     end;
 
-    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
@@ -1012,7 +1005,6 @@ begin
         Spi_comm(COMMAND_ONOFFCOOLER,1);
     end;
 
-    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
@@ -1030,7 +1022,6 @@ begin
       Spi_comm(COMMAND_ONOFFCOOLER,0);
     end;
 
-    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
@@ -1095,7 +1086,6 @@ begin
 
     Spi_comm(COMMAND_SET_DELAYPERLINE, val);
 
-    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
@@ -1123,7 +1113,6 @@ begin
 
     Spi_comm(COMMAND_SET_COOLERONDURINGREAD, val);
 
-    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
@@ -1184,7 +1173,7 @@ begin
     Spi_comm(COMMAND_SET_COOLERPOWERSTART, val);
 
     CoolingStartingPowerPercentageCache := val;
-    sleep(afterCommandSleepTime);
+
     Result := true;
 end;
 
@@ -1195,7 +1184,7 @@ begin
     Spi_comm(COMMAND_SET_COOLERPOWERMAX, val);
     
     CoolingMaximumPowerPercentageCache := val;
-    sleep(afterCommandSleepTime);
+
     Result := true;
 end;
 
@@ -1244,7 +1233,6 @@ begin
 
     debugToFile('cameraSetPIDproportionalGain: value=' + FloatToStr(val));
 
-    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
@@ -1257,7 +1245,6 @@ begin
 
     debugToFile('cameraSetPIDintegralGain: value=' + FloatToStr(val));
 
-    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
@@ -1270,7 +1257,6 @@ begin
 
     debugToFile('cameraSetPIDderivativeGain: value=' + FloatToStr(val));
 
-    sleep(afterCommandSleepTime);
     Result := true;
 end;
 
